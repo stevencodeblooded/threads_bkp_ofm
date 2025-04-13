@@ -241,13 +241,18 @@ async function closeThreadModal() {
   }
 }
 
-// Improved function to find and click the Post button
+// Improved function to find and click the Post button - FIXED to prevent double posts
 function findAndClickPostButton() {
   log("Attempting to find and click post button...", "info");
+
+  // Track if we've already clicked a button to prevent double-clicks
+  let buttonClicked = false;
 
   // First try the most specific selectors
   for (const selector of POST_BUTTON_SELECTORS) {
     try {
+      if (buttonClicked) break; // Skip if already clicked
+
       const postButton = document.querySelector(selector);
       if (postButton) {
         // Find the clickable element - either the element itself or its closest button parent
@@ -258,17 +263,11 @@ function findAndClickPostButton() {
 
         log(`Found post button with selector: ${selector}`, "info");
 
-        // Dispatch multiple events to ensure click is registered
-        clickableElement.focus();
+        // ONLY use one click method to prevent duplicates
         clickableElement.click();
 
-        // Also try dispatching a mouse event
-        const clickEvent = new MouseEvent("click", {
-          bubbles: true,
-          cancelable: true,
-          view: window,
-        });
-        clickableElement.dispatchEvent(clickEvent);
+        // Mark as clicked to prevent further clicks
+        buttonClicked = true;
 
         log("Post button clicked", "info");
         return true;
@@ -281,112 +280,56 @@ function findAndClickPostButton() {
     }
   }
 
-  // Fallback: Look for any button containing "Post" text
-  try {
-    log("Using fallback text-based button search", "info");
+  // Only run fallback if no button has been clicked yet
+  if (!buttonClicked) {
+    // Fallback: Look for any button containing "Post" text
+    try {
+      log("Using fallback text-based button search", "info");
 
-    // Find all button elements
-    const allButtons = Array.from(
-      document.querySelectorAll('div[role="button"]')
-    );
+      // Find all button elements
+      const allButtons = Array.from(
+        document.querySelectorAll('div[role="button"]')
+      );
 
-    // First look for the specific post button based on your HTML
-    const postContainer = document.querySelector(
-      "div.x6s0dn4.x9f619.x78zum5.x15zctf7"
-    );
-    if (postContainer) {
-      const postButton = postContainer.querySelector('div[role="button"]');
-      if (postButton) {
-        postButton.click();
-        log("Clicked post button found in container", "info");
-        return true;
+      // First look for the specific post button based on your HTML
+      const postContainer = document.querySelector(
+        "div.x6s0dn4.x9f619.x78zum5.x15zctf7"
+      );
+      if (postContainer) {
+        const postButton = postContainer.querySelector('div[role="button"]');
+        if (postButton) {
+          postButton.click();
+          log("Clicked post button found in container", "info");
+          return true;
+        }
       }
-    }
 
-    // Then try to find any button with "Post" text
-    for (const button of allButtons) {
-      if (button.textContent.trim().toLowerCase() === "post") {
-        button.click();
-        log("Clicked button with Post text", "info");
-        return true;
+      // Then try to find any button with "Post" text
+      for (const button of allButtons) {
+        if (button.textContent.trim().toLowerCase() === "post") {
+          button.click();
+          log("Clicked button with Post text", "info");
+          return true;
+        }
       }
-    }
 
-    // Last resort: click any button with Post in it
-    for (const button of allButtons) {
-      if (button.textContent.toLowerCase().includes("post")) {
-        button.click();
-        log("Clicked button containing Post text", "info");
-        return true;
+      // Last resort: click any button with Post in it
+      for (const button of allButtons) {
+        if (button.textContent.toLowerCase().includes("post")) {
+          button.click();
+          log("Clicked button containing Post text", "info");
+          return true;
+        }
       }
+    } catch (error) {
+      log(`Error in fallback post button search: ${error.message}`, "error");
     }
-  } catch (error) {
-    log(`Error in fallback post button search: ${error.message}`, "error");
   }
 
-  log("Could not find any post button", "error");
-  return false;
-}
-
-// Advanced function to set text in the textbox - no longer used directly, but kept for reference
-async function setTextInTextbox(element, text) {
-  if (!element) {
-    log("No element provided to set text", "error");
-    return false;
+  if (!buttonClicked) {
+    log("Could not find any post button", "error");
   }
-
-  log(`Setting text: ${text.substring(0, 50)}...`, "info");
-
-  try {
-    // Focus the element first
-    element.focus();
-
-    // Clear existing content
-    element.innerHTML = "";
-
-    // Set the text content using multiple methods
-    element.textContent = text;
-    element.innerText = text;
-
-    // Fallback: Try setting the value if it's an input
-    if ("value" in element) {
-      element.value = text;
-    }
-
-    // Use execCommand as another approach
-    document.execCommand("insertText", false, text);
-
-    // Dispatch input events to ensure the text change is registered
-    const inputEvent = new InputEvent("input", {
-      bubbles: true,
-      cancelable: true,
-      data: text,
-    });
-    element.dispatchEvent(inputEvent);
-
-    const changeEvent = new Event("change", {
-      bubbles: true,
-      cancelable: true,
-    });
-    element.dispatchEvent(changeEvent);
-
-    // Wait a moment for the text to register
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    // Verify text was set correctly
-    const currentText =
-      element.textContent || element.innerText || element.value;
-    if (!currentText || currentText.trim().length === 0) {
-      log("Warning: Text may not have been set correctly", "warn");
-    } else {
-      log("Text set successfully", "info");
-    }
-
-    return true;
-  } catch (error) {
-    log(`Error setting text: ${error.message}`, "error");
-    return false;
-  }
+  return buttonClicked;
 }
 
 // Function to post a single thread with improved sequential posting
@@ -439,32 +382,11 @@ async function postThread(threadText) {
     // Wait briefly for the clear to take effect
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    // Set the content specifically for Threads.net editor
-    // Try multiple methods to ensure it works
-
-    // Method 1: Use the Selection API to insert text
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(textArea);
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    // Insert the text content
+    // Set the content - Using a SINGLE method to prevent issues
     document.execCommand("insertText", false, threadText);
-
-    // Method 2: Directly modify content
-    if (!textArea.textContent || textArea.textContent.trim() === "") {
-      textArea.textContent = threadText;
-
-      // Method 3: Try with innerText as a fallback
-      if (!textArea.textContent || textArea.textContent.trim() === "") {
-        textArea.innerText = threadText;
-      }
-    }
 
     // Dispatch input events to ensure the text change is recognized
     textArea.dispatchEvent(new Event("input", { bubbles: true }));
-    textArea.dispatchEvent(new Event("change", { bubbles: true }));
 
     // Wait for the text to be set
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -476,20 +398,16 @@ async function postThread(threadText) {
         "error"
       );
 
-      // Last resort method: try to manually type the text character by character
-      log("Attempting character-by-character input as last resort", "info");
-
-      // Clear again
+      // Try one more method as fallback
       textArea.innerHTML = "";
       textArea.focus();
+      textArea.textContent = threadText;
 
-      // Type character by character
-      for (let i = 0; i < threadText.length; i++) {
-        const char = threadText.charAt(i);
-        document.execCommand("insertText", false, char);
-        // Brief pause between characters
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      // Dispatch event to ensure recognition
+      textArea.dispatchEvent(new Event("input", { bubbles: true }));
+
+      // Wait a bit longer
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
     // Final verification
@@ -507,16 +425,27 @@ async function postThread(threadText) {
       throw new Error("Failed to click post button");
     }
 
-    // Wait for post to complete
+    // Add a longer wait after posting to ensure completion before next post
     log("Waiting for post to complete", "info");
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await new Promise((resolve) => setTimeout(resolve, 5000));
 
     return true;
   } catch (error) {
     log(`Error posting thread: ${error.message}`, "error");
+
+    // Try to close any open modals on error
+    try {
+      await closeThreadModal();
+    } catch (e) {
+      // Ignore errors from closing modal
+    }
+
     return false;
   }
 }
+
+// Track which threads we've already processed to prevent duplicates
+const processedThreads = new Set();
 
 // Main message listener
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -534,6 +463,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       for (let i = 0; i < request.threads.length; i++) {
         const thread = request.threads[i];
+
+        // Generate a simple hash for this thread to track duplicates
+        const threadHash = thread.slice(0, 50).trim();
+
+        // Skip if we've already processed this thread in this session
+        if (processedThreads.has(threadHash)) {
+          log(`Skipping duplicate thread: ${threadHash}...`, "warn");
+          results.push(false);
+          continue;
+        }
+
         log(`Processing thread ${i + 1}/${request.threads.length}`, "info");
 
         // Close any open modals before starting
@@ -541,6 +481,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         // Post the thread
         const success = await postThread(thread);
+
+        if (success) {
+          // Mark this thread as processed
+          processedThreads.add(threadHash);
+        }
+
         results.push(success);
         log(`Thread ${i + 1} posting result: ${success}`, "info");
 
