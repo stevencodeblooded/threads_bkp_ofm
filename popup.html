@@ -2,39 +2,14 @@
 <html>
 <head>
   <title>Threads Repost Extension</title>
-  <style>
-    body {
-      width: 300px;
-      padding: 10px;
-      font-family: Arial, sans-serif;
-    }
-    .input-group {
-      margin-bottom: 10px;
-    }
-    .input-group label {
-      display: block;
-      margin-bottom: 5px;
-    }
-    .input-group input {
-      width: 100%;
-      padding: 5px;
-    }
-    #threadsList {
-      max-height: 200px;
-      overflow-y: auto;
-      border: 1px solid #ddd;
-      margin-bottom: 10px;
-    }
-    .thread-item {
-      padding: 5px;
-      border-bottom: 1px solid #eee;
-    }
-    .thread-item label {
-      display: inline-block;
-    }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div class="header">
+      <img src="icon.png" alt="Threads Repost Extension" class="logo">
+      <h1>Threads Repost</h1>
+  </div>
+
   <div class="input-group">
     <label for="threadCount">Number of Threads to Extract:</label>
     <input type="number" id="threadCount" min="1" max="10" value="3">
@@ -50,6 +25,22 @@
   <div id="threadsList"></div>
   
   <button id="repostThreads" disabled>Repost Selected Threads</button>
+
+  <!-- Success Modal -->
+  <div id="successModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Repost Successful</h2>
+        <span id="successModalClose" class="close-btn">&times;</span>
+      </div>
+      <div id="successDetails" class="modal-body">
+        <p>Threads reposted successfully!</p>
+      </div>
+      <div class="modal-footer">
+        <button id="successModalClose">Close</button>
+      </div>
+    </div>
+  </div>
 
   <script src="popup.js"></script>
 </body>

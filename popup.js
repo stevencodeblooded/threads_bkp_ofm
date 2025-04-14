@@ -4,6 +4,84 @@ document.addEventListener("DOMContentLoaded", () => {
   const threadCountInput = document.getElementById("threadCount");
   const repostDelayInput = document.getElementById("repostDelay");
   const threadsList = document.getElementById("threadsList");
+  const successModal = document.getElementById("successModal");
+  const successModalClose = document.getElementById("successModalClose");
+  const successDetails = document.getElementById("successDetails");
+
+  // Prevent default popup behavior
+  window.addEventListener("blur", (e) => {
+    window.focus();
+  });
+
+  // Disable context menu
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // Close success modal
+  successModalClose.addEventListener("click", () => {
+    successModal.classList.remove("show");
+  });
+
+  // Restore saved settings from chrome storage
+  function restoreState() {
+    chrome.storage.local.get(
+      ["threadCount", "repostDelay", "extractedThreads"],
+      (data) => {
+        // Restore input values
+        if (data.threadCount) {
+          threadCountInput.value = data.threadCount;
+        }
+        if (data.repostDelay) {
+          repostDelayInput.value = data.repostDelay;
+        }
+
+        // Restore extracted threads
+        if (data.extractedThreads && data.extractedThreads.length > 0) {
+          populateThreadsList(data.extractedThreads);
+          repostThreadsBtn.disabled = false;
+        }
+      }
+    );
+  }
+
+  // Populate threads list and save to storage
+  function populateThreadsList(threads) {
+    // Clear previous threads
+    threadsList.innerHTML = "";
+
+    // Populate threads list with checkboxes
+    threads.forEach((thread, index) => {
+      const threadItem = document.createElement("div");
+      threadItem.className = "thread-item";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.id = `thread-${index}`;
+      checkbox.name = "selectedThreads";
+      checkbox.value = thread;
+      checkbox.checked = true; // Auto-check all threads
+
+      const label = document.createElement("label");
+      label.htmlFor = `thread-${index}`;
+      label.textContent =
+        thread.length > 100 ? thread.substring(0, 100) + "..." : thread;
+
+      threadItem.appendChild(checkbox);
+      threadItem.appendChild(label);
+      threadsList.appendChild(threadItem);
+    });
+
+    // Save extracted threads to storage
+    chrome.storage.local.set({ extractedThreads: threads });
+  }
+
+  // Save input values to storage when changed
+  threadCountInput.addEventListener("change", () => {
+    chrome.storage.local.set({ threadCount: threadCountInput.value });
+  });
+
+  repostDelayInput.addEventListener("change", () => {
+    chrome.storage.local.set({ repostDelay: repostDelayInput.value });
+  });
 
   // Extract threads when button is clicked
   extractThreadsBtn.addEventListener("click", () => {
@@ -29,32 +107,8 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             if (response && response.threads) {
-              // Clear previous threads
-              threadsList.innerHTML = "";
-
-              // Populate threads list with checkboxes
-              response.threads.forEach((thread, index) => {
-                const threadItem = document.createElement("div");
-                threadItem.className = "thread-item";
-
-                const checkbox = document.createElement("input");
-                checkbox.type = "checkbox";
-                checkbox.id = `thread-${index}`;
-                checkbox.name = "selectedThreads";
-                checkbox.value = thread;
-                checkbox.checked = true; // Auto-check all threads
-
-                const label = document.createElement("label");
-                label.htmlFor = `thread-${index}`;
-                label.textContent =
-                  thread.length > 100
-                    ? thread.substring(0, 100) + "..."
-                    : thread;
-
-                threadItem.appendChild(checkbox);
-                threadItem.appendChild(label);
-                threadsList.appendChild(threadItem);
-              });
+              // Populate threads and save to storage
+              populateThreadsList(response.threads);
 
               // Enable repost button
               repostThreadsBtn.disabled = false;
@@ -86,9 +140,20 @@ document.addEventListener("DOMContentLoaded", () => {
         (response) => {
           if (response) {
             console.log("Repost process completed", response);
+
+            // Show success modal
+            if (response.success) {
+              successDetails.innerHTML = `
+                <p>Successfully reposted ${response.successfulPosts} out of ${response.totalPosts} threads!</p>
+              `;
+              successModal.classList.add("show");
+            }
           }
         }
       );
     });
   });
+
+  // Restore state when popup loads
+  restoreState();
 });
