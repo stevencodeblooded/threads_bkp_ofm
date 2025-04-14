@@ -1,12 +1,26 @@
 document.addEventListener("DOMContentLoaded", () => {
   const extractThreadsBtn = document.getElementById("extractThreads");
   const repostThreadsBtn = document.getElementById("repostThreads");
+  const clearThreadsBtn = document.getElementById("clearThreads");
   const threadCountInput = document.getElementById("threadCount");
   const repostDelayInput = document.getElementById("repostDelay");
   const threadsList = document.getElementById("threadsList");
   const successModal = document.getElementById("successModal");
-  const successModalClose = document.getElementById("successModalClose");
-  const successDetails = document.getElementById("successDetails");
+
+  // ALL close buttons for the success modal
+  const successModalCloseButtons = [
+    document.getElementById("successModalClose"),
+    document.querySelector("#successModal .modal-footer button"),
+  ];
+
+  // Add click event listeners to ALL close buttons
+  successModalCloseButtons.forEach((closeButton) => {
+    if (closeButton) {
+      closeButton.addEventListener("click", () => {
+        successModal.classList.remove("show");
+      });
+    }
+  });
 
   // Prevent default popup behavior
   window.addEventListener("blur", (e) => {
@@ -15,11 +29,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Disable context menu
   document.addEventListener("contextmenu", (e) => e.preventDefault());
-
-  // Close success modal
-  successModalClose.addEventListener("click", () => {
-    successModal.classList.remove("show");
-  });
 
   // Restore saved settings from chrome storage
   function restoreState() {
@@ -42,6 +51,27 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     );
   }
+
+  // Clear all threads and reset to default state
+  clearThreadsBtn.addEventListener("click", () => {
+    // Clear threads list
+    threadsList.innerHTML = "";
+
+    // Disable repost button
+    repostThreadsBtn.disabled = true;
+
+    // Reset input values to defaults
+    threadCountInput.value = 3;
+    repostDelayInput.value = 5;
+
+    // Clear stored data
+    chrome.storage.local.remove(
+      ["extractedThreads", "threadCount", "repostDelay"],
+      () => {
+        console.log("Extension state cleared");
+      }
+    );
+  });
 
   // Populate threads list and save to storage
   function populateThreadsList(threads) {
@@ -143,6 +173,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // Show success modal
             if (response.success) {
+              const successDetails = document.getElementById("successDetails");
               successDetails.innerHTML = `
                 <p>Successfully reposted ${response.successfulPosts} out of ${response.totalPosts} threads!</p>
               `;

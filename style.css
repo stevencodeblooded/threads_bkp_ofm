@@ -71,8 +71,7 @@ body * {
   color: #ffffff;
 }
 
-#extractThreads, 
-#repostThreads {
+#extractThreads {
   width: 100%;
   padding: 10px;
   background-color: #1a1a1a;
@@ -84,13 +83,11 @@ body * {
   transition: background-color 0.3s ease;
 }
 
-#extractThreads:hover, 
-#repostThreads:hover {
+#extractThreads:hover {
   background-color: #2a2a2a;
 }
 
-#extractThreads:disabled, 
-#repostThreads:disabled {
+#extractThreads:disabled {
   background-color: #333333;
   color: #666666;
   cursor: not-allowed;
@@ -112,6 +109,54 @@ body * {
 
 #threadsList::-webkit-scrollbar-thumb:hover {
   background: #444444;
+}
+
+/* Button Group Styles */
+.button-group {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+#repostThreads, 
+#clearThreads {
+  flex: 1;
+  width: 50%;
+  height: 46px;
+  padding: 10px;
+  line-height: 26px;
+  background-color: #1a1a1a;
+  color: #ffffff;
+  border: 1px solid #333333;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#repostThreads:hover {
+  background-color: #2a2a2a;
+}
+
+#clearThreads {
+  background-color: #2a1a1a;
+  border-color: #5a3333;
+}
+
+#clearThreads:hover {
+  background-color: #3a2a2a;
+}
+
+#repostThreads:disabled, 
+#clearThreads:disabled {
+  background-color: #333333;
+  color: #666666;
+  cursor: not-allowed;
 }
 
 /* Modal Styles */
