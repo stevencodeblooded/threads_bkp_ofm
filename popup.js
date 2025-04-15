@@ -7,6 +7,20 @@ document.addEventListener("DOMContentLoaded", () => {
   const threadsList = document.getElementById("threadsList");
   const successModal = document.getElementById("successModal");
 
+  // Add a stop reposting button (initially hidden)
+  const buttonGroup = document.querySelector(".button-group");
+  const stopRepostingBtn = document.createElement("button");
+  stopRepostingBtn.id = "stopReposting";
+  stopRepostingBtn.textContent = "Stop Reposting";
+  stopRepostingBtn.style.display = "none"; // Hidden initially
+  stopRepostingBtn.style.backgroundColor = "#5a3333";
+  stopRepostingBtn.style.borderColor = "#7a4444";
+  buttonGroup.appendChild(stopRepostingBtn);
+
+  // Track reposting state
+  let isReposting = false;
+  let shouldStopReposting = false;
+
   // ALL close buttons for the success modal
   const successModalCloseButtons = [
     document.getElementById("successModalClose"),
@@ -52,8 +66,46 @@ document.addEventListener("DOMContentLoaded", () => {
     );
   }
 
+  // Function to toggle UI state during reposting
+  function setRepostingState(reposting) {
+    isReposting = reposting;
+    if (reposting) {
+      // Entering reposting state
+      repostThreadsBtn.style.display = "none";
+      stopRepostingBtn.style.display = "flex";
+      extractThreadsBtn.disabled = true;
+      clearThreadsBtn.disabled = true;
+      threadCountInput.disabled = true;
+      repostDelayInput.disabled = true;
+
+      // Disable checkboxes in thread list
+      const checkboxes = threadsList.querySelectorAll('input[type="checkbox"]');
+      checkboxes.forEach((checkbox) => {
+        checkbox.disabled = true;
+      });
+    } else {
+      // Exiting reposting state
+      repostThreadsBtn.style.display = "flex";
+      stopRepostingBtn.style.display = "none";
+      extractThreadsBtn.disabled = false;
+      clearThreadsBtn.disabled = false;
+      threadCountInput.disabled = false;
+      repostDelayInput.disabled = false;
+      shouldStopReposting = false;
+
+      // Enable checkboxes in thread list
+      const checkboxes = threadsList.querySelectorAll('input[type="checkbox"]');
+      checkboxes.forEach((checkbox) => {
+        checkbox.disabled = false;
+      });
+    }
+  }
+
   // Clear all threads and reset to default state
   clearThreadsBtn.addEventListener("click", () => {
+    // Don't allow clearing while reposting
+    if (isReposting) return;
+
     // Clear threads list
     threadsList.innerHTML = "";
 
@@ -71,6 +123,15 @@ document.addEventListener("DOMContentLoaded", () => {
         console.log("Extension state cleared");
       }
     );
+  });
+
+  // Stop reposting handler
+  stopRepostingBtn.addEventListener("click", () => {
+    if (isReposting) {
+      shouldStopReposting = true;
+      stopRepostingBtn.textContent = "Stopping...";
+      stopRepostingBtn.disabled = true;
+    }
   });
 
   // Populate threads list and save to storage
@@ -115,6 +176,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Extract threads when button is clicked
   extractThreadsBtn.addEventListener("click", () => {
+    // Don't allow extraction while reposting
+    if (isReposting) return;
+
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       // Ensure we have a valid tab
       if (!tabs || !tabs.length) {
@@ -157,7 +221,14 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll('input[name="selectedThreads"]:checked')
     ).map((checkbox) => checkbox.value);
 
+    if (selectedThreads.length === 0) {
+      return; // No threads selected
+    }
+
     const delay = parseInt(repostDelayInput.value);
+
+    // Set UI to reposting state
+    setRepostingState(true);
 
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       chrome.tabs.sendMessage(
@@ -168,20 +239,47 @@ document.addEventListener("DOMContentLoaded", () => {
           delay: delay,
         },
         (response) => {
+          // Reset UI state
+          setRepostingState(false);
+
           if (response) {
             console.log("Repost process completed", response);
 
             // Show success modal
-            if (response.success) {
-              const successDetails = document.getElementById("successDetails");
-              successDetails.innerHTML = `
-                <p>Successfully reposted ${response.successfulPosts} out of ${response.totalPosts} threads!</p>
-              `;
-              successModal.classList.add("show");
-            }
+            const successDetails = document.getElementById("successDetails");
+            const stoppedText = response.stopped
+              ? " (Process was stopped)"
+              : "";
+
+            successDetails.innerHTML = `
+              <p>Successfully reposted ${response.successfulPosts} out of ${response.totalPosts} threads!${stoppedText}</p>
+            `;
+            successModal.classList.add("show");
           }
         }
       );
+    });
+
+    // Set up a listener for the stop request
+    chrome.runtime.onMessage.addListener(function stopListener(message) {
+      if (message.action === "repostStatus" && message.currentThread) {
+        // Update UI with current progress if needed
+        console.log(
+          `Currently posting thread ${message.currentThread} of ${message.totalThreads}`
+        );
+
+        // If we should stop, send the stop signal
+        if (shouldStopReposting) {
+          chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            chrome.tabs.sendMessage(tabs[0].id, { action: "stopReposting" });
+          });
+        }
+      }
+
+      // If reposting is complete, remove this listener
+      if (message.action === "repostComplete") {
+        chrome.runtime.onMessage.removeListener(stopListener);
+      }
     });
   });
 

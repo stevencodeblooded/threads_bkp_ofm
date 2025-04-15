@@ -1,5 +1,5 @@
 // Content script for Threads.net thread extraction and reposting
-// Updated to support both English and Spanish languages
+// Updated to support both English and Spanish languages and stopping functionality
 
 // Selectors based on the provided document
 const THREAD_CONTAINER_SELECTOR =
@@ -17,6 +17,7 @@ const BUTTON_TEXT = {
 let appState = {
   isCreatingThread: false, // True when we're in the thread creation modal
   textAreaFound: false, // True when we've found the text area
+  shouldStopReposting: false, // True when reposting should be stopped
 };
 
 // Enhanced logging function
@@ -522,6 +523,11 @@ async function postThread(threadText) {
   log(`Starting to post thread: ${threadText.substring(0, 50)}...`, "info");
 
   try {
+    // Check if we should stop before starting this thread
+    if (appState.shouldStopReposting) {
+      throw new Error("Reposting stopped by user");
+    }
+
     // Ensure no open modals are interfering
     await closeThreadModal();
 
@@ -577,6 +583,11 @@ async function postThread(threadText) {
     // Wait briefly for the clear to take effect
     await new Promise((resolve) => setTimeout(resolve, 300));
 
+    // Check if we should stop before continuing
+    if (appState.shouldStopReposting) {
+      throw new Error("Reposting stopped by user");
+    }
+
     // Set the content - Using a SINGLE method to prevent issues
     document.execCommand("insertText", false, threadText);
 
@@ -586,6 +597,11 @@ async function postThread(threadText) {
 
     // Wait for the text to be set
     await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Check if we should stop before continuing
+    if (appState.shouldStopReposting) {
+      throw new Error("Reposting stopped by user");
+    }
 
     // Verify that text was actually set
     if (!textArea.textContent || textArea.textContent.trim() === "") {
@@ -615,6 +631,11 @@ async function postThread(threadText) {
 
     // Wait for the UI to update
     await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    // Check if we should stop before continuing
+    if (appState.shouldStopReposting) {
+      throw new Error("Reposting stopped by user");
+    }
 
     // Find and click the post button
     log("Attempting to find and click post button", "info");
@@ -658,7 +679,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const results = [];
       log(`Starting to repost ${request.threads.length} threads`, "info");
 
+      // Reset the stop flag before starting
+      appState.shouldStopReposting = false;
+
       for (let i = 0; i < request.threads.length; i++) {
+        // Send progress message to popup
+        chrome.runtime.sendMessage({
+          action: "repostStatus",
+          currentThread: i + 1,
+          totalThreads: request.threads.length,
+        });
+
+        // Check if we should stop before processing this thread
+        if (appState.shouldStopReposting) {
+          log("Stopping repost process per user request", "info");
+          break;
+        }
+
         const thread = request.threads[i];
 
         // Generate a simple hash for this thread to track duplicates
@@ -687,8 +724,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         results.push(success);
         log(`Thread ${i + 1} posting result: ${success}`, "info");
 
-        // Only wait between posts if there are more to come
-        if (i < request.threads.length - 1) {
+        // Only wait between posts if there are more to come and we're not stopping
+        if (i < request.threads.length - 1 && !appState.shouldStopReposting) {
           log(`Waiting ${request.delay} seconds before next post`, "info");
           await new Promise((resolve) =>
             setTimeout(resolve, request.delay * 1000)
@@ -696,24 +733,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
       }
 
+      // Notify that reposting is complete
+      chrome.runtime.sendMessage({
+        action: "repostComplete",
+      });
+
       // Send back the final results
       const response = {
         success: results.some((result) => result), // At least one success
         successfulPosts: results.filter(Boolean).length,
         totalPosts: results.length,
+        stopped: appState.shouldStopReposting, // Indicate if process was stopped
       };
 
       log(`Repost process complete: ${JSON.stringify(response)}`, "info");
       sendResponse(response);
+
+      // Reset the stop flag after completion
+      appState.shouldStopReposting = false;
     }
 
     // Start the async process and keep messaging channel open
     repostAllThreads();
     return true; // Keep the message channel open for async response
+  } else if (request.action === "stopReposting") {
+    // Set the flag to stop the reposting process
+    appState.shouldStopReposting = true;
+    log("Received stop reposting request", "info");
+    sendResponse({ success: true });
   }
 });
 
 // Log when content script is loaded
 log(
-  "Content script loaded successfully with improved Spanish language support"
+  "Content script loaded successfully with improved stop functionality and Spanish language support"
 );
