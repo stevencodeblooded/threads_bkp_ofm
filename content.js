@@ -55,20 +55,117 @@ function log(message, level = "info") {
   }
 }
 
-// Function to extract threads from the current page
+// Improved function to extract threads while preserving line breaks and ignoring UI elements
 function extractThreads(count) {
   try {
     const threadElements = document.querySelectorAll(THREAD_CONTAINER_SELECTOR);
     const threads = [];
 
-    log(`Found ${threadElements.length} potential threads`);
+    log(`Found ${threadElements.length} potential threads`, "info");
 
     for (let i = 0; i < Math.min(count, threadElements.length); i++) {
-      // Extract text content, cleaning up any unnecessary whitespace
-      const threadText = threadElements[i].innerText.trim();
+      // Get the thread element
+      const threadElement = threadElements[i];
+
+      // Use more direct DOM approach to extract text with line breaks
+      // Look for paragraph elements or text nodes inside the thread container
+      const paragraphs = [];
+      
+      // First try to find specific content paragraphs and filter out UI elements
+      const paragraphElements = Array.from(
+        threadElement.querySelectorAll('div[dir="auto"]')
+      ).filter(el => {
+        // Filter out UI elements like "Traducir" button by checking for common UI classes
+        // or parent elements that might indicate it's a UI component
+        const isUiElement = 
+          el.classList.contains('x1q0g3np') || // Common UI class
+          el.closest('[role="button"]') ||      // Is or is inside a button
+          el.getAttribute('data-lexical-text') === 'true' || // Lexical editor UI element
+          (el.textContent.trim() === 'Traducir'); // Explicitly filter out "Traducir"
+        
+        return !isUiElement;
+      });
+
+      if (paragraphElements.length > 0) {
+        // If we find paragraph elements, extract text from each one
+        paragraphElements.forEach((para) => {
+          const text = para.textContent.trim();
+          if (text) {
+            // Check if this paragraph contains emojis or other special content that might need preservation
+            const hasSpecialContent = 
+              para.querySelector('img') || 
+              para.querySelector('span[aria-label]') ||
+              /[^\x00-\x7F]/.test(text); // Contains non-ASCII characters (like emojis)
+            
+            // If it has special content, try to preserve it with the original HTML
+            if (hasSpecialContent) {
+              log(`Preserving special content in paragraph: ${text.substring(0, 30)}...`, "info");
+              paragraphs.push({
+                text: text,
+                hasSpecialContent: true,
+                originalHTML: para.innerHTML
+              });
+            } else {
+              paragraphs.push({
+                text: text,
+                hasSpecialContent: false
+              });
+            }
+          }
+        });
+        log(`Found ${paragraphs.length} paragraph elements with content`, "info");
+      } else {
+        // Fallback to using innerText which should preserve line breaks
+        const rawText = threadElement.innerText;
+        // Split by newlines and filter out empty lines and UI elements like "Traducir"
+        const lines = rawText
+          .split(/\r?\n/)
+          .filter(line => line.trim() && line.trim() !== 'Traducir');
+          
+        lines.forEach(line => {
+          paragraphs.push({
+            text: line.trim(),
+            hasSpecialContent: /[^\x00-\x7F]/.test(line) // Check for emojis
+          });
+        });
+        
+        log(
+          `Used innerText fallback, found ${paragraphs.length} lines`,
+          "info"
+        );
+      }
+
+      // Build the thread text with proper spacing
+      let threadText = '';
+      let paragraphTexts = [];
+      
+      paragraphs.forEach((para, idx) => {
+        paragraphTexts.push(para.text);
+        
+        // Log for debugging
+        log(
+          `Paragraph ${idx + 1}: ${para.text.substring(0, 50)}${
+            para.text.length > 50 ? "..." : ""
+          }`,
+          "info"
+        );
+      });
+      
+      // Join with double newlines to ensure proper spacing between paragraphs
+      threadText = paragraphTexts.join('\n\n');
+
       if (threadText) {
-        threads.push(threadText);
-        log(`Extracted thread ${i + 1}: ${threadText.substring(0, 100)}...`);
+        log(
+          `Extracted thread ${i + 1} with ${paragraphs.length} paragraphs`,
+          "info"
+        );
+        
+        // Also store the original paragraphs with their special content info
+        // This will be used by the postThread function to better preserve formatting
+        threads.push({
+          text: threadText,
+          paragraphs: paragraphs
+        });
       }
     }
 
@@ -518,9 +615,15 @@ function getButtonPosition(button) {
   };
 }
 
-// Function to post a single thread with improved sequential posting
-async function postThread(threadText) {
-  log(`Starting to post thread: ${threadText.substring(0, 50)}...`, "info");
+// Updated posting function to better preserve formatting and handle extracted thread objects
+async function postThread(threadObj) {
+  // We now expect threadObj to be an object with text and paragraphs properties
+  // If it's just a string, convert it to the expected format
+  const threadData = typeof threadObj === 'string' 
+    ? { text: threadObj, paragraphs: threadObj.split('\n\n').map(p => ({ text: p })) }
+    : threadObj;
+    
+  log(`Starting to post thread: ${threadData.text.substring(0, 50)}...`, "info");
 
   try {
     // Check if we should stop before starting this thread
@@ -571,66 +674,180 @@ async function postThread(threadText) {
       throw new Error("Text area not found");
     }
 
-    // Direct DOM manipulation to ensure text is set
-    log("Setting text using direct DOM methods", "info");
-
-    // Focus the element first
+    // THREADS-SPECIFIC APPROACH: Use manual keyboard events to simulate typing
+    // with Enter key presses between paragraphs
+    
+    // Focus and clear the editor
     textArea.focus();
-
-    // Clear existing content (important)
     textArea.innerHTML = "";
-
-    // Wait briefly for the clear to take effect
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    // Get paragraphs from the thread data
+    const paragraphs = threadData.paragraphs || [];
+    log(`Processing ${paragraphs.length} paragraphs for posting`, "info");
+    
     // Check if we should stop before continuing
     if (appState.shouldStopReposting) {
       throw new Error("Reposting stopped by user");
     }
-
-    // Set the content - Using a SINGLE method to prevent issues
-    document.execCommand("insertText", false, threadText);
-
-    // Dispatch input events to ensure the text change is recognized
+    
+    // APPROACH #1: Simulate keyboard events for each paragraph and press Enter between them
+    try {
+      // We'll simulate typing by dispatching keyboard events
+      for (let i = 0; i < paragraphs.length; i++) {
+        const paragraph = paragraphs[i];
+        
+        // For paragraphs after the first one, insert a line break first
+        if (i > 0) {
+          // Add extra spacing between certain paragraphs for better visual separation
+          // Simulate pressing Enter key twice for better spacing
+          const enterKeyEvent = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+          });
+          textArea.dispatchEvent(enterKeyEvent);
+          
+          // Ensure the key press is processed
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // Insert another Enter press if needed for more spacing (especially before "Then, let's be friends")
+          if (paragraph.text.startsWith("Then,") || 
+              i === paragraphs.length - 2) { // Extra space before the last real paragraph
+            textArea.dispatchEvent(enterKeyEvent);
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+        
+        // Type the paragraph text
+        const paragraphText = paragraph.text || paragraph;
+        
+        // If the paragraph has special content (emojis etc.), try to preserve it
+        if (paragraph.hasSpecialContent && paragraph.originalHTML) {
+          try {
+            // Create a temporary div
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = paragraph.originalHTML;
+            
+            // Try to paste it as rich content
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(textArea);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            
+            document.execCommand('insertHTML', false, paragraph.originalHTML);
+            log("Inserted paragraph with preserved special content", "info");
+          } catch (e) {
+            // Fall back to plain text if HTML insertion fails
+            document.execCommand('insertText', false, paragraphText);
+            log("Used plain text fallback for special content", "warn");
+          }
+        } else {
+          // Regular text paragraph
+          document.execCommand('insertText', false, paragraphText);
+        }
+        
+        // Wait a moment to ensure the text is processed
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
+      log("Completed manual typing simulation with Enter key presses", "info");
+    } catch (e) {
+      log(`Error in keyboard simulation approach: ${e.message}`, "warn");
+      
+      // APPROACH #2: If that fails, try the direct HTML approach again but with specific Threads.net formatting
+      try {
+        // Clear the editor
+        textArea.innerHTML = "";
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // This specific HTML structure is what Threads.net creates when you manually type paragraphs
+        // We're directly emulating the DOM structure that Threads creates
+        let html = '';
+        for (let i = 0; i < paragraphs.length; i++) {
+          const paragraph = paragraphs[i];
+          const paragraphText = paragraph.text || paragraph;
+          
+          // If this paragraph has special content and we have the original HTML
+          if (paragraph.hasSpecialContent && paragraph.originalHTML) {
+            html += `<div>${paragraph.originalHTML}</div>`;
+          } else {
+            // Regular text paragraph
+            html += `<div>${paragraphText}</div>`;
+          }
+          
+          // Between paragraphs, add an empty div with <br> (this is how Threads represents a new line)
+          if (i < paragraphs.length - 1) {
+            // Add extra empty lines before certain paragraphs
+            if (i < paragraphs.length - 2 && 
+                (paragraphs[i+1].text?.startsWith("Then,") || 
+                 i === paragraphs.length - 3)) { // Extra space before the last real paragraph
+              html += '<div><br></div><div><br></div>'; // Double line break
+            } else {
+              html += '<div><br></div>'; // Single line break
+            }
+          }
+        }
+        
+        // Set the HTML directly
+        textArea.innerHTML = html;
+        log("Applied Threads-specific paragraph HTML structure", "info");
+      } catch (e2) {
+        log(`Error in HTML structure approach: ${e2.message}`, "warn");
+        
+        // APPROACH #3: Last resort - try to use clipboard
+        try {
+          // Format the text with double line breaks for pasting
+          const formattedText = paragraphs
+            .map(p => p.text || p)
+            .join('\n\n\n'); // Use triple newlines for more spacing
+          
+          // Use clipboard API if available
+          await navigator.clipboard.writeText(formattedText);
+          
+          // Clear and focus
+          textArea.innerHTML = "";
+          textArea.focus();
+          
+          // Paste the content
+          document.execCommand('paste');
+          log("Used clipboard paste as last resort", "info");
+        } catch (e3) {
+          log(`All paragraph preservation approaches failed: ${e3.message}`, "error");
+          
+          // If all else fails, just set the text content directly
+          textArea.textContent = threadData.text;
+        }
+      }
+    }
+    
+    // Force update and ensure content is recognized
     textArea.dispatchEvent(new Event("input", { bubbles: true }));
     textArea.dispatchEvent(new Event("change", { bubbles: true }));
-
-    // Wait for the text to be set
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    
+    // Wait for the text to be properly set
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
     // Check if we should stop before continuing
     if (appState.shouldStopReposting) {
       throw new Error("Reposting stopped by user");
     }
 
-    // Verify that text was actually set
-    if (!textArea.textContent || textArea.textContent.trim() === "") {
-      log(
-        "WARNING: Text verification failed - no text content detected",
-        "error"
-      );
-
-      // Try one more method as fallback
-      textArea.innerHTML = "";
-      textArea.focus();
-      textArea.textContent = threadText;
-
-      // Dispatch event to ensure recognition
-      textArea.dispatchEvent(new Event("input", { bubbles: true }));
-      textArea.dispatchEvent(new Event("change", { bubbles: true }));
-
-      // Wait a bit longer
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Final verification - check what actually made it into the editor
+    if (textArea.textContent) {
+      log(`Content in editor (first 100 chars): ${textArea.textContent.substring(0, 100)}...`, "info");
+      // Also log the HTML structure for debugging
+      log(`Editor HTML structure: ${textArea.innerHTML.substring(0, 200)}...`, "info");
+    } else {
+      log("WARNING: Text verification failed - editor appears empty", "error");
     }
 
-    // Final verification
-    log(
-      `Current text in editor: "${textArea.textContent.substring(0, 50)}..."`,
-      "info"
-    );
-
     // Wait for the UI to update
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
     // Check if we should stop before continuing
     if (appState.shouldStopReposting) {
@@ -645,7 +862,7 @@ async function postThread(threadText) {
 
     // Add a longer wait after posting to ensure completion before next post
     log("Waiting for post to complete", "info");
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
     return true;
   } catch (error) {
@@ -665,19 +882,48 @@ async function postThread(threadText) {
 // Track which threads we've already processed to prevent duplicates
 const processedThreads = new Set();
 
-// Main message listener
+// Modified repost function in the message listener
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   log(`Received message: ${request.action}`, "info");
 
   if (request.action === "extractThreads") {
-    const threads = extractThreads(request.count);
-    log(`Extracted ${threads.length} threads`, "info");
-    sendResponse({ threads: threads });
+    const extractedThreads = extractThreads(request.count);
+    log(`Extracted ${extractedThreads.length} threads`, "info");
+    
+    // Store the full thread objects with formatting data in storage
+    try {
+      chrome.storage.local.set({ 
+        extractedThreadObjects: extractedThreads 
+      }, () => {
+        log("Stored thread objects with formatting data", "info");
+      });
+    } catch (e) {
+      log(`Error storing thread objects: ${e.message}`, "warn");
+    }
+    
+    // Send only the text content to the popup for display
+    sendResponse({ 
+      threads: extractedThreads.map(thread => thread.text) 
+    });
   } else if (request.action === "repostThreads") {
     // Process threads sequentially with specified delay
     async function repostAllThreads() {
       const results = [];
       log(`Starting to repost ${request.threads.length} threads`, "info");
+
+      // Get the full thread objects from storage if they exist
+      let threadObjects = [];
+      try {
+        // Try to get the full thread objects with formatting data
+        chrome.storage.local.get(["extractedThreadObjects"], (data) => {
+          if (data.extractedThreadObjects) {
+            threadObjects = data.extractedThreadObjects;
+            log(`Retrieved ${threadObjects.length} thread objects with formatting data`, "info");
+          }
+        });
+      } catch (e) {
+        log(`Error retrieving thread objects: ${e.message}`, "warn");
+      }
 
       // Reset the stop flag before starting
       appState.shouldStopReposting = false;
@@ -696,10 +942,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           break;
         }
 
-        const thread = request.threads[i];
+        // Get the thread text
+        const threadText = request.threads[i];
+        
+        // Find the corresponding thread object with formatting data
+        let threadObj = threadObjects.find(t => t.text === threadText);
+        if (!threadObj) {
+          // If we don't have the thread object, use the text as is
+          threadObj = threadText;
+          log(`Using plain text for thread ${i+1} (no formatting data found)`, "warn");
+        }
 
         // Generate a simple hash for this thread to track duplicates
-        const threadHash = thread.slice(0, 50).trim();
+        const threadHash = (typeof threadObj === 'string' ? threadObj : threadObj.text).slice(0, 50).trim();
 
         // Skip if we've already processed this thread in this session
         if (processedThreads.has(threadHash)) {
@@ -714,7 +969,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         await closeThreadModal();
 
         // Post the thread
-        const success = await postThread(thread);
+        const success = await postThread(threadObj);
 
         if (success) {
           // Mark this thread as processed
