@@ -6,16 +6,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const repostDelayInput = document.getElementById("repostDelay");
   const threadsList = document.getElementById("threadsList");
   const successModal = document.getElementById("successModal");
-
-  // Add a stop reposting button (initially hidden)
-  const buttonGroup = document.querySelector(".button-group");
-  const stopRepostingBtn = document.createElement("button");
-  stopRepostingBtn.id = "stopReposting";
-  stopRepostingBtn.textContent = "Stop Reposting";
-  stopRepostingBtn.style.display = "none"; // Hidden initially
-  stopRepostingBtn.style.backgroundColor = "#5a3333";
-  stopRepostingBtn.style.borderColor = "#7a4444";
-  buttonGroup.appendChild(stopRepostingBtn);
+  const stopRepostingBtn = document.getElementById("stopReposting");
 
   // Track reposting state
   let isReposting = false;
@@ -44,28 +35,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // Disable context menu
   document.addEventListener("contextmenu", (e) => e.preventDefault());
 
-  // Restore saved settings from chrome storage
-  function restoreState() {
-    chrome.storage.local.get(
-      ["threadCount", "repostDelay", "extractedThreads"],
-      (data) => {
-        // Restore input values
-        if (data.threadCount) {
-          threadCountInput.value = data.threadCount;
-        }
-        if (data.repostDelay) {
-          repostDelayInput.value = data.repostDelay;
-        }
-
-        // Restore extracted threads
-        if (data.extractedThreads && data.extractedThreads.length > 0) {
-          populateThreadsList(data.extractedThreads);
-          repostThreadsBtn.disabled = false;
-        }
-      }
-    );
-  }
-
   // Function to toggle UI state during reposting
   function setRepostingState(reposting) {
     isReposting = reposting;
@@ -77,6 +46,9 @@ document.addEventListener("DOMContentLoaded", () => {
       clearThreadsBtn.disabled = true;
       threadCountInput.disabled = true;
       repostDelayInput.disabled = true;
+
+      // Save the reposting state to storage
+      chrome.storage.local.set({ isReposting: true });
 
       // Disable checkboxes in thread list
       const checkboxes = threadsList.querySelectorAll('input[type="checkbox"]');
@@ -92,6 +64,9 @@ document.addEventListener("DOMContentLoaded", () => {
       threadCountInput.disabled = false;
       repostDelayInput.disabled = false;
       shouldStopReposting = false;
+
+      // Save the reposting state to storage
+      chrome.storage.local.set({ isReposting: false });
 
       // Enable checkboxes in thread list
       const checkboxes = threadsList.querySelectorAll('input[type="checkbox"]');
@@ -118,7 +93,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Clear stored data
     chrome.storage.local.remove(
-      ["extractedThreads", "threadCount", "repostDelay"],
+      ["extractedThreads", "threadCount", "repostDelay", "isReposting"],
       () => {
         console.log("Extension state cleared");
       }
@@ -131,6 +106,14 @@ document.addEventListener("DOMContentLoaded", () => {
       shouldStopReposting = true;
       stopRepostingBtn.textContent = "Stopping...";
       stopRepostingBtn.disabled = true;
+
+      // Save the stopping state to storage
+      chrome.storage.local.set({ isStopping: true });
+
+      // Notify the content script to stop reposting
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        chrome.tabs.sendMessage(tabs[0].id, { action: "stopReposting" });
+      });
     }
   });
 
@@ -215,6 +198,35 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  // Check if reposting is in progress with the content script
+  function checkRepostingStatus() {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs || !tabs.length) return;
+
+      // Ask content script about reposting status
+      try {
+        chrome.tabs.sendMessage(
+          tabs[0].id,
+          { action: "getRepostingStatus" },
+          (response) => {
+            // If we get a response and reposting is active
+            if (response && response.isReposting) {
+              setRepostingState(true);
+
+              // If stopping was requested
+              if (response.isStopping) {
+                stopRepostingBtn.textContent = "Stopping...";
+                stopRepostingBtn.disabled = true;
+              }
+            }
+          }
+        );
+      } catch (error) {
+        console.error("Error checking reposting status:", error);
+      }
+    });
+  }
+
   // Repost selected threads
   repostThreadsBtn.addEventListener("click", () => {
     const selectedThreads = Array.from(
@@ -241,6 +253,9 @@ document.addEventListener("DOMContentLoaded", () => {
         (response) => {
           // Reset UI state
           setRepostingState(false);
+
+          // Clear the stopping state
+          chrome.storage.local.remove(["isStopping"]);
 
           if (response) {
             console.log("Repost process completed", response);
@@ -282,6 +297,48 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   });
+
+  // Restore saved settings from chrome storage
+  function restoreState() {
+    chrome.storage.local.get(
+      [
+        "threadCount",
+        "repostDelay",
+        "extractedThreads",
+        "isReposting",
+        "isStopping",
+      ],
+      (data) => {
+        // Restore input values
+        if (data.threadCount) {
+          threadCountInput.value = data.threadCount;
+        }
+        if (data.repostDelay) {
+          repostDelayInput.value = data.repostDelay;
+        }
+
+        // Restore extracted threads
+        if (data.extractedThreads && data.extractedThreads.length > 0) {
+          populateThreadsList(data.extractedThreads);
+          repostThreadsBtn.disabled = false;
+        }
+
+        // Check if reposting is active based on storage
+        if (data.isReposting) {
+          setRepostingState(true);
+
+          // If stopping was requested
+          if (data.isStopping) {
+            stopRepostingBtn.textContent = "Stopping...";
+            stopRepostingBtn.disabled = true;
+          }
+
+          // Also verify with content script
+          checkRepostingStatus();
+        }
+      }
+    );
+  }
 
   // Restore state when popup loads
   restoreState();

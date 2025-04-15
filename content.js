@@ -18,6 +18,8 @@ let appState = {
   isCreatingThread: false, // True when we're in the thread creation modal
   textAreaFound: false, // True when we've found the text area
   shouldStopReposting: false, // True when reposting should be stopped
+  isActivelyReposting: false, // New flag to track if reposting is currently in progress
+  isStopping: false, // New flag to track if stopping was requested
 };
 
 // Enhanced logging function
@@ -889,27 +891,37 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "extractThreads") {
     const extractedThreads = extractThreads(request.count);
     log(`Extracted ${extractedThreads.length} threads`, "info");
-    
+
     // Store the full thread objects with formatting data in storage
     try {
-      chrome.storage.local.set({ 
-        extractedThreadObjects: extractedThreads 
-      }, () => {
-        log("Stored thread objects with formatting data", "info");
-      });
+      chrome.storage.local.set(
+        {
+          extractedThreadObjects: extractedThreads,
+        },
+        () => {
+          log("Stored thread objects with formatting data", "info");
+        }
+      );
     } catch (e) {
       log(`Error storing thread objects: ${e.message}`, "warn");
     }
-    
+
     // Send only the text content to the popup for display
-    sendResponse({ 
-      threads: extractedThreads.map(thread => thread.text) 
+    sendResponse({
+      threads: extractedThreads.map((thread) => thread.text),
     });
   } else if (request.action === "repostThreads") {
     // Process threads sequentially with specified delay
     async function repostAllThreads() {
       const results = [];
       log(`Starting to repost ${request.threads.length} threads`, "info");
+
+      // Set the actively reposting flag to true
+      appState.isActivelyReposting = true;
+      appState.isStopping = false;
+
+      // Save reposting state to storage
+      chrome.storage.local.set({ isReposting: true, isStopping: false });
 
       // Get the full thread objects from storage if they exist
       let threadObjects = [];
@@ -918,7 +930,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.storage.local.get(["extractedThreadObjects"], (data) => {
           if (data.extractedThreadObjects) {
             threadObjects = data.extractedThreadObjects;
-            log(`Retrieved ${threadObjects.length} thread objects with formatting data`, "info");
+            log(
+              `Retrieved ${threadObjects.length} thread objects with formatting data`,
+              "info"
+            );
           }
         });
       } catch (e) {
@@ -944,17 +959,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         // Get the thread text
         const threadText = request.threads[i];
-        
+
         // Find the corresponding thread object with formatting data
-        let threadObj = threadObjects.find(t => t.text === threadText);
+        let threadObj = threadObjects.find((t) => t.text === threadText);
         if (!threadObj) {
           // If we don't have the thread object, use the text as is
           threadObj = threadText;
-          log(`Using plain text for thread ${i+1} (no formatting data found)`, "warn");
+          log(
+            `Using plain text for thread ${i + 1} (no formatting data found)`,
+            "warn"
+          );
         }
 
         // Generate a simple hash for this thread to track duplicates
-        const threadHash = (typeof threadObj === 'string' ? threadObj : threadObj.text).slice(0, 50).trim();
+        const threadHash = (
+          typeof threadObj === "string" ? threadObj : threadObj.text
+        )
+          .slice(0, 50)
+          .trim();
 
         // Skip if we've already processed this thread in this session
         if (processedThreads.has(threadHash)) {
@@ -993,6 +1015,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         action: "repostComplete",
       });
 
+      // Reset the flags after completion
+      appState.shouldStopReposting = false;
+      appState.isActivelyReposting = false;
+      appState.isStopping = false;
+
+      // Update storage
+      chrome.storage.local.set({ isReposting: false, isStopping: false });
+
       // Send back the final results
       const response = {
         success: results.some((result) => result), // At least one success
@@ -1003,19 +1033,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       log(`Repost process complete: ${JSON.stringify(response)}`, "info");
       sendResponse(response);
-
-      // Reset the stop flag after completion
-      appState.shouldStopReposting = false;
     }
 
     // Start the async process and keep messaging channel open
     repostAllThreads();
     return true; // Keep the message channel open for async response
   } else if (request.action === "stopReposting") {
-    // Set the flag to stop the reposting process
+    // Set the flags to stop the reposting process
     appState.shouldStopReposting = true;
+    appState.isStopping = true;
+
+    // Save to storage
+    chrome.storage.local.set({ isStopping: true });
+
     log("Received stop reposting request", "info");
     sendResponse({ success: true });
+  } else if (request.action === "getRepostingStatus") {
+    // Return the current status of reposting
+    sendResponse({
+      isReposting: appState.isActivelyReposting,
+      isStopping: appState.isStopping,
+    });
   }
 });
 
