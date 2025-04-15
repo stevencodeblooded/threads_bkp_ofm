@@ -1,24 +1,23 @@
 // Content script for Threads.net thread extraction and reposting
+// Updated to support both English and Spanish languages
 
 // Selectors based on the provided document
 const THREAD_CONTAINER_SELECTOR =
   ".x1a6qonq.x6ikm8r.x10wlt62.xj0a0fe.x126k92a.x6prxxf.x7r5mf7";
-const CREATE_THREAD_BUTTON_SELECTOR = 'div[role="button"][aria-label="Create"]';
-const NEW_THREAD_MODAL_SELECTOR = 'div[aria-hidden="false"] .xn2onr6 .xwyxwvj';
-const NEW_THREAD_TEXT_SELECTOR = 'div[contenteditable="true"][role="textbox"]';
-const POST_BUTTON_SELECTORS = [
-  // Primary selector observed in screenshots
-  'div[role="button"] div.xc26acl:contains("Post")',
-  // Direct button selectors
-  'div[role="button"][aria-label="Post"]',
-  // Most specific selector for the post button container shown in your HTML
-  'div.x6s0dn4.x9f619.x78zum5.x15zctf7 div[role="button"]',
-  // Text content selectors
-  'div[role="button"] div.xc26acl',
-  // Fallback to any button with Post text
-  'div[role="button"]:contains("Post")',
-];
-const CLOSE_MODAL_BUTTON_SELECTOR = 'div[role="button"][aria-label="Close"]';
+
+// Language support - add Spanish translations
+const BUTTON_TEXT = {
+  CREATE: ["Create", "Crear", "New thread", "Nueva publicación", "Nuevo hilo"],
+  POST: ["Post", "Publicar"],
+  CLOSE: ["Close", "Cerrar"],
+  CANCEL: ["Cancel", "Cancelar"],
+};
+
+// Track application state to handle context-dependent buttons
+let appState = {
+  isCreatingThread: false, // True when we're in the thread creation modal
+  textAreaFound: false, // True when we've found the text area
+};
 
 // Enhanced logging function
 function log(message, level = "info") {
@@ -79,29 +78,83 @@ function extractThreads(count) {
   }
 }
 
+// Function to check if a button contains any of the specified texts
+function buttonContainsAnyText(button, textOptions) {
+  const buttonText = button.textContent.trim().toLowerCase();
+  return textOptions.some((text) => buttonText.includes(text.toLowerCase()));
+}
+
 // Function to click the create thread button with multiple selectors
 function clickCreateThreadButton() {
-  // Selectors for different create/post button variants
-  const createButtonSelectors = [
-    CREATE_THREAD_BUTTON_SELECTOR,
-    // SVG Create button
-    'div[role="button"] svg[aria-label="Create"]',
-    // Direct parent of SVG
-    'div[role="button"]:has(svg[aria-label="Create"])',
-    // Alternative selectors for create buttons
-    'div[role="button"][aria-label="New thread"]',
-    // Most generic button selector with create text
-    'div[role="button"]:contains("Create")',
-  ];
+  log(
+    "Looking for create button with options: " + BUTTON_TEXT.CREATE.join(", "),
+    "info"
+  );
 
-  // Try each selector
-  for (const selector of createButtonSelectors) {
-    try {
-      // First try querySelector for string selectors
-      if (typeof selector === "string") {
+  // Reset application state
+  appState.isCreatingThread = false;
+  appState.textAreaFound = false;
+
+  try {
+    // Try to find the plus icon by path - this is language-independent and most reliable
+    const plusPaths = document.querySelectorAll('svg path[d="M6 2v8m4-4H2"]');
+    if (plusPaths.length > 0) {
+      for (const path of plusPaths) {
+        const svg = path.closest("svg");
+        const button = svg.closest('[role="button"]');
+        if (button) {
+          button.click();
+          log("Clicked plus icon button (create thread)", "info");
+          appState.isCreatingThread = true;
+          return true;
+        }
+      }
+    }
+
+    // Try to find the SVG create button that works in both languages
+    const svgButtons = document.querySelectorAll("svg[aria-label]");
+    for (const svg of svgButtons) {
+      const ariaLabel = svg.getAttribute("aria-label");
+      if (BUTTON_TEXT.CREATE.includes(ariaLabel)) {
+        const button = svg.closest('[role="button"]');
+        if (button) {
+          button.click();
+          log(`Clicked create button with aria-label: ${ariaLabel}`, "info");
+          appState.isCreatingThread = true;
+          return true;
+        }
+      }
+    }
+
+    // Check for Spanish "Nuevo hilo" button specifically
+    const nuevoHiloBtn = Array.from(
+      document.querySelectorAll('[role="button"]')
+    ).find((el) => el.textContent.includes("Nuevo hilo"));
+    if (nuevoHiloBtn) {
+      nuevoHiloBtn.click();
+      log("Clicked 'Nuevo hilo' button", "info");
+      appState.isCreatingThread = true;
+      return true;
+    }
+
+    // Selectors for different create button variants
+    const createButtonSelectors = [
+      // Try all possible aria-label combinations
+      ...BUTTON_TEXT.CREATE.map(
+        (text) => `div[role="button"][aria-label="${text}"]`
+      ),
+      ...BUTTON_TEXT.CREATE.map((text) => `svg[aria-label="${text}"]`),
+      // Specific class combinations that typically represent create buttons
+      "div.x1i10hfl.x1qjc9v5.xjbqb8w.xjqpnuy",
+      "div.x9f619.x6ikm8r.xtvsq51.xh8yej3",
+    ];
+
+    // Try each selector
+    for (const selector of createButtonSelectors) {
+      try {
         const createButton = document.querySelector(selector);
         if (createButton) {
-          // If selector is for SVG, find the closest clickable parent
+          // Find the clickable element
           const buttonToClick =
             createButton.closest('[role="button"]') ||
             createButton.parentElement?.closest('[role="button"]') ||
@@ -112,31 +165,38 @@ function clickCreateThreadButton() {
             `Clicked create thread button with selector: ${selector}`,
             "info"
           );
+          appState.isCreatingThread = true;
+          return true;
+        }
+      } catch (error) {
+        log(`Error with selector ${selector}: ${error.message}`, "warn");
+      }
+    }
+
+    // Manual search as fallback
+    try {
+      // Look for buttons with create text in any language
+      const buttons = Array.from(
+        document.querySelectorAll('div[role="button"]')
+      );
+      for (const button of buttons) {
+        if (buttonContainsAnyText(button, BUTTON_TEXT.CREATE)) {
+          button.click();
+          log(`Clicked create button with text-based search`, "info");
+          appState.isCreatingThread = true;
           return true;
         }
       }
-    } catch (error) {
-      log(`Error with selector ${selector}: ${error.message}`, "warn");
+    } catch (err) {
+      log(`Error in fallback create button search: ${err.message}`, "warn");
     }
-  }
 
-  // Manual search as fallback
-  try {
-    // Look for buttons with "Create" text
-    const buttons = Array.from(document.querySelectorAll('div[role="button"]'));
-    for (const button of buttons) {
-      if (button.textContent.includes("Create")) {
-        button.click();
-        log(`Clicked create button with text-based search`, "info");
-        return true;
-      }
-    }
-  } catch (err) {
-    log(`Error in fallback create button search: ${err.message}`, "warn");
+    log("Could not find create thread button", "error");
+    return false;
+  } catch (error) {
+    log(`Error in create button function: ${error.message}`, "error");
+    return false;
   }
-
-  log("Could not find create thread button", "error");
-  return false;
 }
 
 // Wait for element with timeout
@@ -195,13 +255,81 @@ function waitForElement(selector, timeout = 10000) {
 // Function to close the current thread modal
 async function closeThreadModal() {
   try {
+    log(
+      "Looking for close/cancel button with options: " +
+        [...BUTTON_TEXT.CLOSE, ...BUTTON_TEXT.CANCEL].join(", "),
+      "info"
+    );
+
+    // Check for Spanish-specific "Cancelar" button
+    const cancelarBtn = Array.from(
+      document.querySelectorAll('[role="button"]')
+    ).find((el) => el.textContent.trim() === "Cancelar");
+    if (cancelarBtn) {
+      cancelarBtn.click();
+      log("Clicked 'Cancelar' button", "info");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return true;
+    }
+
+    // Try to find X icons by SVG structure first (language-independent)
+    const svgElements = document.querySelectorAll("svg");
+    for (const svg of svgElements) {
+      // Check if it has a relevant aria-label
+      const ariaLabel = svg.getAttribute("aria-label");
+      if (
+        ariaLabel &&
+        [...BUTTON_TEXT.CLOSE, ...BUTTON_TEXT.CANCEL].includes(ariaLabel)
+      ) {
+        const button = svg.closest('[role="button"]');
+        if (button) {
+          button.click();
+          log(`Clicked close button with aria-label: ${ariaLabel}`, "info");
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          return true;
+        }
+      }
+
+      // Check X icon by path content - this is language-independent
+      const paths = svg.querySelectorAll("path");
+      for (const path of paths) {
+        const d = path.getAttribute("d");
+        // Common X icon path patterns
+        if (
+          d &&
+          (d.includes("M18.7") ||
+            d.includes("M24 6.4") ||
+            d.includes("Z") ||
+            d.includes("z") ||
+            d.includes("M10"))
+        ) {
+          const button = svg.closest('[role="button"]');
+          if (button) {
+            button.click();
+            log("Clicked X icon by path pattern", "info");
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            return true;
+          }
+        }
+      }
+    }
+
     // Multiple selectors for close button
     const closeButtonSelectors = [
-      'div[role="button"][aria-label="Close"]',
-      'div[role="button"][aria-label="Cancel"]',
-      'button[aria-label="Close"]',
-      // Based on your screenshots
-      'div.x6ikm8r.x10wlt62.xlyipyv:contains("Cancel")',
+      // All possible aria-label combinations
+      ...BUTTON_TEXT.CLOSE.map(
+        (text) => `div[role="button"][aria-label="${text}"]`
+      ),
+      ...BUTTON_TEXT.CANCEL.map(
+        (text) => `div[role="button"][aria-label="${text}"]`
+      ),
+      ...BUTTON_TEXT.CLOSE.map((text) => `button[aria-label="${text}"]`),
+      // Common X icon classes
+      'svg[class*="x1lliihq"]',
+      'svg[data-visualcompletion="css-img"]',
+      // Common close button classes
+      "div.x6s0dn4.x78zum5.xdt5ytf",
+      "div.x1i10hfl.x6umtig",
     ];
 
     for (const selector of closeButtonSelectors) {
@@ -223,10 +351,15 @@ async function closeThreadModal() {
       }
     }
 
-    // Fallback: look for any button with "Cancel" text
+    // Fallback: look for any button with close/cancel text in any language
     const allButtons = document.querySelectorAll('div[role="button"]');
     for (const button of allButtons) {
-      if (button.textContent.includes("Cancel")) {
+      if (
+        buttonContainsAnyText(button, [
+          ...BUTTON_TEXT.CLOSE,
+          ...BUTTON_TEXT.CANCEL,
+        ])
+      ) {
         button.click();
         log("Closed modal with text-based search", "info");
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -241,95 +374,147 @@ async function closeThreadModal() {
   }
 }
 
-// Improved function to find and click the Post button - FIXED to prevent double posts
+// Improved function to find and click the Post button - supports both languages and context-aware
 function findAndClickPostButton() {
-  log("Attempting to find and click post button...", "info");
+  // If we're in the thread creation context and have found the text area,
+  // then we should look for the submit/post button, not the create button
+  if (!appState.isCreatingThread || !appState.textAreaFound) {
+    log("Error: Not in correct state to post", "error");
+    return false;
+  }
 
-  // Track if we've already clicked a button to prevent double-clicks
-  let buttonClicked = false;
+  log(
+    "Attempting to find and click post button with options: " +
+      BUTTON_TEXT.POST.join(", "),
+    "info"
+  );
 
-  // First try the most specific selectors
-  for (const selector of POST_BUTTON_SELECTORS) {
-    try {
-      if (buttonClicked) break; // Skip if already clicked
+  try {
+    // For Spanish UI - Look specifically for "Publicar" at the bottom right
+    // This is a special case for the Spanish interface where both create and submit use "Publicar"
+    const publicarButtons = Array.from(
+      document.querySelectorAll('div[role="button"]')
+    ).filter((button) => button.textContent.trim() === "Publicar");
 
+    // If we found multiple "Publicar" buttons, we want the one at the bottom of the modal
+    if (publicarButtons.length > 0) {
+      // Get the one with the highest vertical position (typically the submit button)
+      let bottomButton = publicarButtons[0];
+      let maxY = getButtonPosition(bottomButton).y;
+
+      for (let i = 1; i < publicarButtons.length; i++) {
+        const pos = getButtonPosition(publicarButtons[i]);
+        if (pos.y > maxY) {
+          maxY = pos.y;
+          bottomButton = publicarButtons[i];
+        }
+      }
+
+      bottomButton.click();
+      log("Clicked bottom 'Publicar' button (Spanish UI)", "info");
+      return true;
+    }
+
+    // 1. Try to find specific post button elements
+    const postElements = document.querySelectorAll("div.xc26acl");
+    for (const element of postElements) {
+      const text = element.textContent.trim();
+      if (BUTTON_TEXT.POST.includes(text)) {
+        const button = element.closest('[role="button"]');
+        if (button) {
+          button.click();
+          log(`Clicked post button with text: ${text}`, "info");
+          return true;
+        }
+      }
+    }
+
+    // 2. Look for position - the post button is typically at the bottom right of modal
+    // First check for buttons in the typical submit position
+    const submitPositionButtons = document.querySelectorAll(
+      'div.x6s0dn4.x9f619.x78zum5.x15zctf7 div[role="button"]'
+    );
+    if (submitPositionButtons.length > 0) {
+      submitPositionButtons[0].click();
+      log("Clicked submit button by position", "info");
+      return true;
+    }
+
+    // 3. Try all aria-label selectors
+    const postButtonSelectors = BUTTON_TEXT.POST.map(
+      (text) => `div[role="button"][aria-label="${text}"]`
+    );
+
+    for (const selector of postButtonSelectors) {
       const postButton = document.querySelector(selector);
       if (postButton) {
-        // Find the clickable element - either the element itself or its closest button parent
-        const clickableElement =
-          postButton.closest('[role="button"]') ||
-          postButton.parentElement?.closest('[role="button"]') ||
-          postButton;
-
+        postButton.click();
         log(`Found post button with selector: ${selector}`, "info");
-
-        // ONLY use one click method to prevent duplicates
-        clickableElement.click();
-
-        // Mark as clicked to prevent further clicks
-        buttonClicked = true;
-
-        log("Post button clicked", "info");
         return true;
       }
-    } catch (error) {
-      log(
-        `Error with post button selector ${selector}: ${error.message}`,
-        "warn"
-      );
     }
-  }
 
-  // Only run fallback if no button has been clicked yet
-  if (!buttonClicked) {
-    // Fallback: Look for any button containing "Post" text
-    try {
-      log("Using fallback text-based button search", "info");
+    // 4. Look for enabled buttons - the post button is typically enabled when text is entered
+    const enabledButtons = Array.from(
+      document.querySelectorAll('div[role="button"][aria-disabled="false"]')
+    );
+    if (enabledButtons.length > 0) {
+      // Choose the rightmost (typically submit) button
+      let rightmostButton = enabledButtons[0];
+      let maxX = getButtonPosition(rightmostButton).x;
 
-      // Find all button elements
-      const allButtons = Array.from(
-        document.querySelectorAll('div[role="button"]')
-      );
-
-      // First look for the specific post button based on your HTML
-      const postContainer = document.querySelector(
-        "div.x6s0dn4.x9f619.x78zum5.x15zctf7"
-      );
-      if (postContainer) {
-        const postButton = postContainer.querySelector('div[role="button"]');
-        if (postButton) {
-          postButton.click();
-          log("Clicked post button found in container", "info");
-          return true;
+      for (let i = 1; i < enabledButtons.length; i++) {
+        const pos = getButtonPosition(enabledButtons[i]);
+        if (pos.x > maxX) {
+          maxX = pos.x;
+          rightmostButton = enabledButtons[i];
         }
       }
 
-      // Then try to find any button with "Post" text
-      for (const button of allButtons) {
-        if (button.textContent.trim().toLowerCase() === "post") {
-          button.click();
-          log("Clicked button with Post text", "info");
-          return true;
-        }
-      }
-
-      // Last resort: click any button with Post in it
-      for (const button of allButtons) {
-        if (button.textContent.toLowerCase().includes("post")) {
-          button.click();
-          log("Clicked button containing Post text", "info");
-          return true;
-        }
-      }
-    } catch (error) {
-      log(`Error in fallback post button search: ${error.message}`, "error");
+      rightmostButton.click();
+      log("Clicked rightmost enabled button", "info");
+      return true;
     }
-  }
 
-  if (!buttonClicked) {
+    // 5. Final fallback: Look for any button with post text
+    const allButtons = Array.from(
+      document.querySelectorAll('div[role="button"]')
+    );
+
+    // Check for buttons with exact post text
+    for (const button of allButtons) {
+      const buttonText = button.textContent.trim();
+      if (BUTTON_TEXT.POST.includes(buttonText)) {
+        button.click();
+        log(`Clicked button with exact post text: ${buttonText}`, "info");
+        return true;
+      }
+    }
+
+    // Then try partial match
+    for (const button of allButtons) {
+      if (buttonContainsAnyText(button, BUTTON_TEXT.POST)) {
+        button.click();
+        log("Clicked button containing post text", "info");
+        return true;
+      }
+    }
+
     log("Could not find any post button", "error");
+    return false;
+  } catch (error) {
+    log(`Error finding post button: ${error.message}`, "error");
+    return false;
   }
-  return buttonClicked;
+}
+
+// Helper function to get a button's position
+function getButtonPosition(button) {
+  const rect = button.getBoundingClientRect();
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2,
+  };
 }
 
 // Function to post a single thread with improved sequential posting
@@ -339,6 +524,10 @@ async function postThread(threadText) {
   try {
     // Ensure no open modals are interfering
     await closeThreadModal();
+
+    // Reset application state
+    appState.isCreatingThread = false;
+    appState.textAreaFound = false;
 
     // Click create thread button
     log("Clicking create thread button", "info");
@@ -350,8 +539,13 @@ async function postThread(threadText) {
     log("Waiting for text area to appear", "info");
     let textArea = null;
     try {
-      textArea = await waitForElement(NEW_THREAD_TEXT_SELECTOR, 15000);
+      // This selector works in both languages
+      textArea = await waitForElement(
+        'div[contenteditable="true"][role="textbox"]',
+        15000
+      );
       log("Text area found via selector", "info");
+      appState.textAreaFound = true;
     } catch (err) {
       // Fallback: try to find by contenteditable attribute
       log("Trying fallback method to find text area", "warn");
@@ -361,6 +555,7 @@ async function postThread(threadText) {
       if (editables.length > 0) {
         textArea = editables[0];
         log("Found editable element via fallback", "info");
+        appState.textAreaFound = true;
       } else {
         throw new Error("Could not find any editable text area");
       }
@@ -387,6 +582,7 @@ async function postThread(threadText) {
 
     // Dispatch input events to ensure the text change is recognized
     textArea.dispatchEvent(new Event("input", { bubbles: true }));
+    textArea.dispatchEvent(new Event("change", { bubbles: true }));
 
     // Wait for the text to be set
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -405,6 +601,7 @@ async function postThread(threadText) {
 
       // Dispatch event to ensure recognition
       textArea.dispatchEvent(new Event("input", { bubbles: true }));
+      textArea.dispatchEvent(new Event("change", { bubbles: true }));
 
       // Wait a bit longer
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -517,4 +714,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // Log when content script is loaded
-log("Content script loaded successfully");
+log(
+  "Content script loaded successfully with improved Spanish language support"
+);
